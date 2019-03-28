@@ -1,0 +1,238 @@
+---
+title: "175 Project"
+author: "Drew"
+date: "11/4/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warnings = F, message = F)
+```
+
+```{r Import and load libraries, echo = F, warning=F}
+    library(survival)
+    library(survminer)
+    library(ggplot2)
+    library(tidyverse)
+    
+    ret = retinopathy
+```
+
+#Exploratory Analysis/Prep Data
+```{r}
+    names(ret)
+    head(ret)
+    
+    #Factorize variables
+    ret = mutate(ret, risk = factor(risk))
+    
+    #Create survival object
+    ret.surv = Surv(ret$futime, ret$status)
+    
+    #Quantiles of survival times
+    ###quantile(ret.surv, c(.25, .5, .75))
+    
+    
+    
+```
+    
+#Kaplan-Meier Analysis
+```{r}
+    ###Overall KM estimation###
+
+    ##Visualize the effect of our KM estimates##
+    
+    
+    #Fit to survival model
+    ret.survfit = survfit(ret.surv ~ 1, data = ret)
+    #Plot km estimate
+    ggsurvplot(data = ret, ret.survfit,
+               legend = c(.7, .2),
+               legend.title = 'Covariates',
+               ggtheme = theme_bw(),
+               title = 'All Covariates')
+    
+    
+    ###KM of categorical variables###
+    
+    #vs Laser type
+    km.laser = survfit(ret.surv ~ ret$laser)
+    ggsurvplot(data= ret, km.laser, conf.int = T, pval = T, pval.method = T,
+               legend = c(.7, .2),
+               legend.title = 'Laser Type',
+               legend.labs = c('Argon', 'Xenon'),
+               ggtheme = theme_bw(),
+               title = 'Vs Laser Type')
+    
+    #vs type(age group)
+    km.type = survfit(ret.surv ~ ret$type)
+    ggsurvplot(data= ret, km.type, conf.int = T, pval = T, pval.method = T,
+               legend = c(.7, .2),
+               legend.title = 'Age Group',
+               legend.labs = c('Adult', 'Juvenile'),
+               ggtheme = theme_bw(),
+               title = 'Vs Age Group')
+    
+    #vs eye
+    km.eye = survfit(ret.surv ~ ret$eye)
+    ggsurvplot(data= ret, km.eye, conf.int = T, pval = T, pval.method = T,
+               legend = c(.7, .2),
+               legend.title = 'Eye',
+               legend.labs = c('Left', 'Right'),
+               ggtheme = theme_bw(),
+               title = 'Vs Eye(Left/Right)')
+    
+    #vs risk
+    km.risk = survfit(ret.surv ~ ret$risk)
+    ggsurvplot(data= ret, km.risk, conf.int = F, pval = T, pval.method = T,
+               legend.title = 'Risk Level(6-12)',
+               ggtheme = theme_bw(),
+               title = 'Vs Risk Level')
+    
+    #vs trt(treated/control)
+    km.trt = survfit(ret.surv ~ ret$trt)
+    ggsurvplot(data= ret, km.trt, conf.int = T, pval = T, pval.method = T,
+               legend = c(.7, .2),
+               legend.title = 'Treated or Controlled',
+               legend.labs = c('Treated', 'Control'),
+               ggtheme = theme_bw(),
+               title = 'Vs Treated or Not')
+    
+    
+    ###Conclusion###
+    
+    #risk and trt variables are the only ones that hav e a log rank pvalue below .05
+    #Should definitly include these in our analaysis.
+    
+```
+
+
+#CoxPH Analysis Univariate
+```{r}
+    #Laser:
+    cox.laser = coxph(ret.surv ~ laser, data = ret)
+    summary(cox.laser)
+    # LRT, Wald, logrank: p  = 0.3
+    # exp(coef) = 1.175 (argon)
+    #INSIGNIFICIANT
+    
+    #Type(adult/juve):
+    cox.type = coxph(ret.surv ~ type, data = ret)
+    summary(cox.type)
+    # LRT, Wald, logrank: p  = 0.9
+    # exp(coef) = 1.022 (adult)
+    #INSIGNIFICIANT
+    
+    #Eye:
+    cox.eye = coxph(ret.surv ~ eye, data = ret)
+    summary(cox.eye)
+    # LRT, Wald, logrank: p  = 0.9
+    # exp(coef) = 1.316 (left)
+    #INSIGNIFICIANT
+    
+    #Risk
+    cox.risk = coxph(ret.surv ~ risk, data = ret)
+    summary(cox.risk)
+    # LRT, Wald, logrank: p  = 0
+    #SIGNIFICIANT
+    
+    #Treatment(treated/control)
+    cox.trt = coxph(ret.surv ~ trt, data = ret)
+    summary(cox.trt)
+    # LRT, Wald, logrank: p  = 0
+    # exp(coef) = 1.022
+    #SIGNIFICIANT
+    
+    ###Test coxph Assumptions with coxzph
+    cox.zph(cox.laser)
+    cox.zph(cox.type)
+    cox.zph(cox.eye)
+    cox.zph(cox.risk)
+    cox.zph(cox.trt)
+    #All pvalues > .05
+    #Assumptions HOLD
+    
+```
+
+#CoxPH Analysis Multivariate
+```{r}
+    #Test covariates together
+    cox.all = coxph(data = ret, ret.surv~ ret$laser + ret$eye + ret$trt + ret$type + ret$risk)
+    summary(cox.all)
+    #Treatment is SIGNIFICANT
+    #ONLY risk10 is SIGNIFICANT
+    
+    #Test only with trt and risk
+    cox.trt_laser = coxph(data = ret, ret.surv ~ ret$trt + ret$laser)
+    summary(cox.trt_risk)
+    #Again treatment is SIGNIFICANT
+    #ONLY risk10 is significant
+    
+    cox.risk_laser = coxph(data = ret, ret.surv ~ ret$laser + ret$risk)
+    summary(cox.risk_laser)
+    
+    cox.risk_eye = coxph(data = ret, ret.surv ~ ret$eye + ret$risk)
+    summary(cox.risk_eye)
+    
+    cox.risk_type = coxph(data = ret, ret.surv ~ ret$type + ret$risk)
+    summary(cox.risk_type)
+    
+LRTa = 2*(logLik(cox.trt_laser) - logLik(cox.trt))
+LRTa
+
+round(pchisq(as.numeric(LRTa), 2, lower.tail = FALSE),3)
+    
+```
+
+
+
+#Log-Log Plots
+```{r}
+    #Log-llog plots of significant factor variables
+
+    #Log-log of treatment variable
+    plot(survfit(ret.surv~ret$trt), fun='cloglog', col=3:6,lwd=2,
+         main = 'Log-Log of Treatment variable')
+
+    #Log-log of risk
+    plot(survfit(ret.surv~ret$risk), fun='cloglog', col=3:6,lwd=2,
+         main = 'Log-Log of Risk variable')
+```
+
+
+#Stratifying
+```{r}
+cox.strata.risk = coxph(data = ret, ret.surv ~ ret$trt + strata(ret$risk))
+summary(cox.strata.risk)
+
+
+cox.strata.risk = coxph(data = ret, ret.surv ~ ret$age + ret$trt + strata(ret$risk))
+summary(cox.strata.risk)
+```
+
+
+#Analysis of Clustered Observations
+
+```{r}
+#Cluter id wagainst treatment
+cluster = coxph(data = ret, ret.surv ~ trt + strata(risk) + cluster(id))
+summary(cluster)
+
+#Cluster id against laser
+cluster = coxph(data = ret, ret.surv ~ trt + cluster(id))
+summary(cluster)
+
+
+
+ret.time = retinopathy$futime
+ret.status = retinopathy$status
+
+ret.age = retinopathy$age
+ret.risk = retinopathy$risk
+ret.trt = retinopathy$trt
+
+#Cluster id against trt and laser
+fitd = coxph(Surv(ret.time, ret.status)~ ret.age + ret.risk + ret.trt)
+anova(fitd)
+
+```

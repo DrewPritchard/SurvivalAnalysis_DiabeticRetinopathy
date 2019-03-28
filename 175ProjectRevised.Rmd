@@ -1,0 +1,535 @@
+---
+title: "175 Project Final: Survival Analysis of Diabetic Retinopathy"
+author: "Drew Pritchard \\ Issam Zejli \\ Janelle Samansky"
+date: "12/5/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+\newpage
+
+
+
+```{r libs and data}
+library(survival)
+library(survminer)
+library(tidyverse)
+library(kableExtra)
+
+ret = retinopathy
+
+#Factorize variables
+ret = mutate(ret, risk = factor(risk))
+
+#Create survival object
+ret.surv = Surv(ret$futime, ret$status)
+```
+#Background
+
+Diabetic Retinopathy is a disease that affects some people with diabetes. It occurs when high blood sugar damages the blood vessels in the retina. These blood vessels can swell and leak. Or they can close, stopping blood from passing through.  All of these changes can cause loss of vision.
+
+#Description
+
+This dataset was a 50 percent random sample of patients with “high-risk” diabetic retinopathy. The data contains 197 patients, and each one had two types of a laser treatments on a random eye (left eye or right eye). The event of interest was the time(in months) from initiation of treatment to the time when visual acuity dropped below 5/200. Censoring was caused by death, dropout, or end of the study.
+
+#Scientific Questions of Interest
+
+* Does the treatment of an eye effect the chance of survival? If so how are they different and to what degree?
+* Is treatment at young age more effective than at an older age?
+* Is there a difference in treatments between left eye and right eye?
+
+#Complication
+
+Each observation is actually one of two parts. We can see that there are two of each patient id. For each patient only one eye was treated(trt == 1). Essentially we are given a control for each patient. Generally a dataset will only include one observation per subject. This allows us to look for a discrepancy amongst treated eye and untreated eye survival times. This is especially convenient because there are no other variables to interfere with our inference as each patient has one treated and one untreated.
+	This does mean however that there is room for errors when performing our analysis and we have to be careful about the fact that our original dataset has a duplicate for each patient.
+
+\newpage
+#Our Dataset
+\begin{center}
+Retinopathy is a survival data for trials of laser treatment on patients with diabetic retinopathy. A snapshot of the first few observations looks like:
+```{r}
+kable(head(ret), booktabs = T, caption = 'Head of Retinopathy') %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width=FALSE)
+```
+
+
+An explanation of what the nine variables are is explained in the following table.  
+```{r}
+variableNames = colnames(ret)
+
+variableDesc = c('Numeric subject id. Two observations each.',
+                 'Type of laser used.',
+                 'Which eye was treated.',
+                 'Age at diagnosis of diabetes.',
+                 'Type of diabetes. Depending on the age of the subject.',
+                 'Indicator for whether an eye is treated(1) or controled(0).',
+                 'Time ot loss of vision or last follow-up',
+                 'Indicator for whether subject lost their vision in that particular eye(1) or was censored from the trial(0)',
+                 'A risk score for the eye.')
+
+variableRange = c('(5 - 1749)',
+                  'xenon or argon',
+                  'right or left',
+                  '1 - 58',
+                  'juvenile or adult',
+                  '0 or 1',
+                  '0.30 - 74.97',
+                  '0 or 1',
+                  '6 - 12')
+
+variableTable = data.frame(cbind(variableNames, variableDesc, variableRange))
+colnames(variableTable) = c('Name', 'Description', 'Values')
+
+kable(variableTable) %>% column_spec(2, width = "30em")
+```
+\end{center}
+
+#General Analysis
+
+####KM estimate
+We use the Kaplan Meier curve to estimate the survival probability of Diabetic Retinopathy patients. As shown in the graph, the survival probability decreases with each passing month.
+```{r}
+    #Fit to survival model
+    ret.survfit = survfit(ret.surv ~ 1, data = ret)
+    #Plot km estimate
+    ggsurvplot(data = ret, ret.survfit, legend = 'none',
+               title = ('Kaplan-Meier Curve of Retinopathy Data'),
+               ggtheme = theme_bw()) + 
+      xlab('Time Until Loss of Vision \n (in Months)') +
+      ylab('Probability of Survival')
+```
+
+
+####Quantiles of Survival Times
+```{r, echo = F}
+quantsKM = as.data.frame(quantile(ret.survfit, c(.1,.2,.3,.4,.5)))
+colnames(quantsKM) = c('Time \n (Months)', 'Lower Bound','Upper Bound')
+
+kable(quantsKM, caption = 'Table of Quantiles') %>% kable_styling(bootstrap_options = c("striped", "hover", "responsive"), full_width=FALSE)
+```
+Analyzing the quantile survival(Table Above): the 10th quantile for the survival function is the time at which the survival probability is below the probability of 0.9 which is at 6.2 months. Similarly for the 20th quantile it is equal to 13.38 months.  
+In our data, no patient events occurred after 61 months and so we just assume that that the survival probability after that time is the same as the most recent event. In this case probability remains approximately 0.554.  
+This can cause issues in inferences and analysis. Generally a statistician would want survial data where the probability of survival converges to zero. We will do our best to avoid any problems that may occur.
+
+####Kaplan-Meier Analysis
+
+We continue our analysis of the KM estimate by looking at the effect of specific categorical variables in our data. In particular, we want to determine whether they are significant enough to include in our final model.
+
+The test statistic we use is for the log-rank test and is a large chi-square test that uses as its criterion a statistic that provides an overall comparison of the KM curves. The test compares the expected number of events with the actual number of events. The test won’t be rejected as long as the expected number of events is the same as the actual number of events.
+
+Our null hypothesis is as such: $H_0: S_1(t) = S_2(t)$ (or in terms of hazard ratios: $H_0: h_1(t) = h_2(t)$)
+In other words, we are trying ot find evidence for or against the assumption that survival function is the same for different values of a covariate.
+
+```{r, echo = F, include = F}
+    ###Overall KM estimation###
+
+    ##Visualize the effect of our KM estimates##
+    
+    
+    #Fit to survival model
+    ret.survfit = survfit(ret.surv ~ 1, data = ret)
+    #Plot km estimate
+    ggsurvplot(data = ret, ret.survfit,
+               legend = c(.7, .2),
+               legend.title = 'Covariates',
+               ggtheme = theme_bw(),
+               title = 'All Covariates')
+    
+    
+    ###KM of categorical variables###
+    
+    #vs Laser type
+    km.laser = survfit(ret.surv ~ ret$laser)
+    ggsurvplot(data= ret, km.laser, conf.int = T, pval = T, pval.method = T,
+               legend = c(.7, .2),
+               legend.title = 'Laser Type',
+               legend.labs = c('Argon', 'Xenon'),
+               ggtheme = theme_bw(),
+               title = 'Vs Laser Type')
+    
+    #vs type(age group)
+    km.type = survfit(ret.surv ~ ret$type)
+    ggsurvplot(data= ret, km.type, conf.int = T, pval = T, pval.method = T,
+               legend = c(.7, .2),
+               legend.title = 'Age Group',
+               legend.labs = c('Adult', 'Juvenile'),
+               ggtheme = theme_bw(),
+               title = 'Vs Age Group')
+    
+    #vs eye
+    km.eye = survfit(ret.surv ~ ret$eye)
+    ggsurvplot(data= ret, km.eye, conf.int = T, pval = T, pval.method = T,
+               legend = c(.7, .2),
+               legend.title = 'Eye',
+               legend.labs = c('Left', 'Right'),
+               ggtheme = theme_bw(),
+               title = 'Vs Eye(Left/Right)')
+    
+    #vs risk
+    km.risk = survfit(ret.surv ~ ret$risk)
+    ggsurvplot(data= ret, km.risk, conf.int = F, pval = T, pval.method = T,
+               legend.title = 'Risk Level(6-12)',
+               ggtheme = theme_bw(),
+               title = 'Vs Risk Level')
+    
+    #vs trt(treated/control)
+    km.trt = survfit(ret.surv ~ ret$trt)
+    ggsurvplot(data= ret, km.trt, conf.int = T, pval = T, pval.method = T,
+               legend = c(.7, .2),
+               legend.title = 'Treated or Controlled',
+               legend.labs = c('Treated', 'Control'),
+               ggtheme = theme_bw(),
+               title = 'Vs Treated or Not')
+    
+    
+    ###Conclusion###
+    
+    #risk and trt variables are the only ones that hav e a log rank pvalue below .05
+    #Should definitly include these in our analaysis.
+    
+```
+
+* The p-value of the log-rank test for *laser* is 0.32 which is greater than our $\alpha$ = 0.05, so we failt to reject the null hypothesis. Both the survival function where *laser* = Argon and *laser* = Xenon are identical. **No signifcant difference** is found.
+
+* The p-value of the log-rank test for *age* is 0.89 which is also greater than $\alpha$ 0.05. Again, we fail to reject the null hypothesis $\rightarrow$ Survival functions of *age* are the same $\rightarrow$ **No significant difference.**
+
+* The p-value of the log-rank test for *eye* is 0.09 which is greater than $\alpha$ = 0.05. Again, we fail to reject the null hypothesis $\rightarrow$ Survival functions of *age* are the same $\rightarrow$ **No significant difference.**
+
+* The p-value of the log-rank test for *trt*, *risk*, and *type*(separately) are less than $\alpha$ = 0.05. We **reject** the null hypothesis $\rightarrow$ Survival functions including these covariates are not the same $\rightarrow$ **Significant Difference.**
+
+
+We graph a visual representation such as the graph below using the ggsurvplot function in the survminer package. In the first graph we see the difference between treated and not-treated eyes. Similarily in the second graph we see the difference between all the different values of *risk*.
+
+```{r, echo = F}
+km.trt = survfit(ret.surv ~ ret$trt)
+ggsurvplot(data= ret, km.trt, conf.int = T, pval = T, pval.method = T,
+           legend = c(.7, .2),
+           legend.title = 'Treated or Controlled',
+           legend.labs = c('Treated', 'Control'),
+           ggtheme = theme_bw(),
+           title = 'KM Estimate of Treated vs Not Treated') + 
+      xlab('Time Until Loss of Vision \n (in Months)') +
+      ylab('Probability of Survival')
+
+km.risk = survfit(ret.surv ~ ret$risk)
+ggsurvplot(data= ret, km.risk, conf.int = F, pval = T, pval.method = T,
+           legend.title = 'Risk Level(6-12)',
+           ggtheme = theme_bw(),
+           title = 'KM Estimate of All Risk Levels') + 
+      xlab('Time Until Loss of Vision \n (in Months)') +
+      ylab('Probability of Survival')
+```
+
+\newpage
+
+#Cox PH Analysis - Univariate
+
+Cox-proportional hazards modeling can be used for single variables in order to estimate their relative effect on hazard rate. For instance, if we fit a cox model on laser, the model shows that the hazard proportion(exp(coef) in the coxph() function) is 1.107 which indicates that the hazard rate for *laser* = Argon is larger relative to Xenon with 10.7% increase in hazard rate(1.107 vs 1.0).
+
+```{r, echo = F, include = F}
+
+#Laser:
+cox.laser = coxph(ret.surv ~ laser, data = ret)
+summary(cox.laser)
+# LRT, Wald, logrank: p  = 0.3
+# exp(coef) = 1.175 (argon)
+#INSIGNIFICIANT
+    
+#Type(adult/juve):
+cox.type = coxph(ret.surv ~ type, data = ret)
+summary(cox.type)
+# LRT, Wald, logrank: p  = 0.9
+# exp(coef) = 1.022 (adult)
+#INSIGNIFICIANT
+
+#Eye:
+cox.eye = coxph(ret.surv ~ eye, data = ret)
+summary(cox.eye)
+# LRT, Wald, logrank: p  = 0.9
+# exp(coef) = 1.316 (left)
+#INSIGNIFICIANT
+
+#Risk
+cox.risk = coxph(ret.surv ~ risk, data = ret)
+summary(cox.risk)
+# LRT, Wald, logrank: p  = 0
+#SIGNIFICIANT
+
+#Treatment(treated/control)
+cox.trt = coxph(ret.surv ~ trt, data = ret)
+summary(cox.trt)
+# LRT, Wald, logrank: p  = 0
+# exp(coef) = 1.022
+#SIGNIFICIANT
+
+```
+
+1. *laser*
+  + We conclude that with p-value of .3 (greater than .05) we say there is not a significant difference between the hazard rates for the patients that were treated with the two lasers.
+    
+2. *type*
+  + The p-value for our test is .9 which is greater than .05 so we conclude that there is no significant difference between the hazard rates of the patients with
+juvenile diabetes than those with adult diabetes.
+
+3. *eye*
+  + The p-value for this test is .09 which is slightly above .05 therefore we say there is not much significant difference between the hazard rate of patients that receive treatment on their right eye than those that receive treatment on their left eye.
+
+4. *risk*
+  + With a p-value less than .05 we conclude that there is a significant difference between the level of risk and the effect on patients with diabetes.
+
+5. *trt*
+  + From running a coxph test we see that the p value is 2e^-6 which is considerably less than 0.05 therefore we conclude that there is a significant difference between the patients that were in the treatment group than those that were in control.  
+
+\newpage
+
+\begin{table}[]
+\centering
+\label{my-label}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Variable & exp(coef) & CI Interval of exp(coef) & p-value & LRT Test Statistic \\ \midrule
+Laser & \begin{tabular}[c]{@{}l@{}}1.175\\ (argon)\end{tabular} & {[}0.857, 1.610{]} & 0.3 & 1.0 \\ \midrule
+Type & \begin{tabular}[c]{@{}l@{}}1.022\\ (adult)\end{tabular} & {[}0.744, 1.404{]} & 0.9 & 0.02 \\ \midrule
+Eye & \begin{tabular}[c]{@{}l@{}}1.316\\ (left)\end{tabular} & {[}0.952, 1.818{]} & 0.09 & 2.89 \\ \midrule
+Treatment & 0.46 & {[}0.3304, 0.6403{]} & 2e-06 & 22.35 \\ \midrule
+Age & 1.003 & {[}0.9922, 1.014{]} & 0.6 & 0.27 \\ \midrule
+\begin{tabular}[c]{@{}l@{}}Risk8\\ Risk9\\ Risk10\\ Risk11\\ Risk12\end{tabular} & \begin{tabular}[c]{@{}l@{}}1.0851\\ 0.9614\\ 2.8826\\ 1.3758\\ 1.8351\end{tabular} & \begin{tabular}[c]{@{}l@{}}{[}0.4012, 2.935{]}\\ {[}0.4081, 2.265{]}\\ {[}1.2313, 6.748{]}\\ {[}0.5654, 3.361{]}\\ {[}0.7526, 4.474{]}\end{tabular} & 2e-06 & 28.95 \\ \bottomrule
+\end{tabular}
+\end{table}
+
+####What We Infer
+
+The covariate *trt* has the highest likelihood of 22.35 and p-value of 2e-06 which makes it significant and most likely should include in our model.
+The covariate *risk* also has a high likelihood of 28.95 and p-value of 2e-05 which makes it significant and must include in our model.
+
+#Covariate Selection
+By performing the backward selection and comparing the log likelihood of the covariates we see that *risk* and *trt* are the best covariates for our survival model because they have the highest log-likehood values and the smallest p-values. Below shows an example of the anova table results that we analyze for each model.(NA values refer to the NULL model with no covariates)
+Some of the models we used were:  
+*fitb = coxph(ret.surv ~ laser + eye + age + type + risk + trt, data = ret)*  
+
+*fitc = coxph(ret.surv ~ eye + risk + trt, data = ret)*
+
+*fitd = coxph(ret.surv ~ risk + trt, data = ret)*
+
+```{r, echo = F}
+fitb = coxph(ret.surv ~ laser + eye + age + type + risk + trt, data = ret)
+
+kable(anova(fitb)) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width=FALSE) %>% 
+  footnote('anova(fitb) results')
+
+fitc = coxph(ret.surv ~ eye + risk + trt, data = ret)
+kable(anova(fitc)) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width=FALSE) %>% 
+  footnote('anova(fitc) results')
+
+fitd <-coxph(ret.surv ~ risk + trt, data = ret)
+
+kable(anova(fitd)) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width=FALSE) %>%
+  footnote('anova(fitd) results')
+```
+
+We reach the same conclusion that only *risk* and *trt* are significant.  
+
+
+#Cox PH Analysis - Multivariate
+
+```{r, echo = F, include = F}
+#Test covariates together
+cox.all = coxph(data = ret, ret.surv~ ret$laser + ret$eye + ret$trt + ret$age + ret$type + ret$risk)
+summary(cox.all)
+#Treatment is SIGNIFICANT
+#ONLY risk10 is SIGNIFICANT
+
+#Test only with trt and risk
+cox.trt_risk = coxph(data = ret, ret.surv ~ ret$trt + ret$risk)
+summary(cox.trt_risk)
+#Again treatment is SIGNIFICANT
+#ONLY risk10 is significant
+
+cox.risk_laser = coxph(data = ret, ret.surv ~ ret$laser + ret$risk)
+summary(cox.risk_laser)
+
+cox.risk_eye = coxph(data = ret, ret.surv ~ ret$eye + ret$risk)
+summary(cox.risk_eye)
+
+cox.risk_type = coxph(data = ret, ret.surv ~ ret$type + ret$risk)
+summary(cox.risk_type)
+```
+Testing all the covariates together, trt and *risk10* are the most significant. As shown below in the raw R output(All numbers refer to the p-value of our test).  
+Something we are weary about is the fact that only *risk10* is significant and the other 5 levels aren't. This is abnormal especially considering that *risk10* is right in the middle of the *risk* scale(6 - 12). We will keep this in mind throughout the analysis.
+
+```{r}
+tableCox2 = summary(cox.all)$coefficients[,5] %>% as.data.frame()
+colnames(tableCox2) = 'p-value'
+rownames(tableCox2) = c('laserargon', 'eyeleft','trt', 'age', 'typeadult','risk8', 'risk9', 'risk10', 'risk11','risk12')
+
+kable(tableCox2) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width=FALSE)
+```
+
+From our previous univariate analysis and covariate selection, we chose to test the covariates:  
+*trt* and *risk*.  
+Again, *trt* and *risk10* remains the most significant as shown below.
+```{r, echo= F}
+tableCox1 = summary(cox.trt_risk)$coefficients[,5] %>% as.data.frame()
+colnames(tableCox1) = 'p-value'
+rownames(tableCox1) = c('trt','risk8', 'risk9', 'risk10', 'risk11','risk12')
+
+kable(tableCox1) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width=FALSE)
+```
+
+#Model Checking
+
+First we simply run a series of coxzph functions to test our Cox PH assumptions:  
+```{r, echo=F}
+###Test coxph Assumptions with coxzph
+cox.zph(cox.laser)
+cox.zph(cox.type)
+cox.zph(cox.eye)
+cox.zph(cox.risk)
+cox.zph(cox.trt)
+#All pvalues > .05
+#Assumptions HOLD
+```
+
+
+
+\begin{table}[]
+\centering
+\label{my-label}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Variable & PH Assumption Check \\ \midrule
+Laser & Satisfied \\ \midrule
+Type & Satisfied \\ \midrule
+Eye & Satisfied \\ \midrule
+Treatment & Satisfied \\ \midrule
+Age & Satisfied \\ \midrule
+\begin{tabular}[c]{@{}l@{}}Risk8\\ Risk9\\ Risk10\\ Risk11\\ Risk12\end{tabular} & Satisfied \\ \bottomrule
+\end{tabular}
+\end{table}
+
+None of our variables result in a p-value below .05 so we believe our assumptions are met.
+Next we use a complementary log-log plot to visualize whether the Cox PH assumption is appropriate for modeling the effect of our factorized covariates.
+
+```{r, echo = F}
+#Log-llog plots of significant factor variables
+
+#Log-log of treatment variable
+plot(survfit(ret.surv~ret$trt), fun='cloglog', col=3:6,lwd=2,
+     main = 'Log-Log of Treatment variable',
+     xlab = 'Time Until Loss of Vision \n (in Months)',
+     ylab = 'Log(-Log(S))')
+```
+
+We see from the Log-log plot for treatment the two curves are parallel so we can say that the assumptions hold, which agrees with our conclusion after performing the coxzph test.
+
+
+```{r}
+#Log-log of risk
+plot(survfit(ret.surv~ret$risk), fun='cloglog', col=3:6,lwd=2,
+     main = 'Log-Log of Risk variable',
+     xlab = 'Time Until Loss of Vision \n (in Months)',
+     ylab = 'Log(-Log(S))')
+```
+
+This log-log plot of our risk variable seems to contradict our previous coxzph analysis.. Although it could be because we have a total of six levels, we still decide it would be best to look at stratifying the risk variable.
+
+#Stratification
+
+We cannot leave *risk* in our model as it is. While we do believe there is some significance in it, it does not hold up to our PH assumptions and is overall causing issues. To try and fix this, we stratify *risk* and compare it to our model without *risk* at all.
+
+After stratifying on the risk variable using the strata() function we take a look at the difference with and without it.  
+
+```{r, echo = F}
+cox.strata.risk = coxph(data = ret, ret.surv ~ ret$trt + strata(ret$risk))
+cox.strata.risk
+cox.trt
+```
+
+We choose to perform an LRT test between the reduced and full model using the formula:  
+$-2*log(L_R) - (-2*log(L_F))$  
+From this we get:  
+```{r}
+LRT1 = 2*(logLik(cox.strata.risk) - logLik(cox.trt))
+
+round(pchisq(as.numeric(LRT1), 2, lower.tail = FALSE),3)
+```
+We find a chi-squared p-value of 0 and declare that the stratified term is significant.  
+
+Now we take a second to look over our current model
+```{r}
+cox.strata.risk
+```
+What we can infer here is that the hazard ratio(exp(coef)) for treated subjects is only 45% of those who are untreated. Meaning they keep their sight 55% longer.  
+Also, we can find the confidence interval by reading the summary.
+```{r, include = F}
+summary(cox.strata.risk)
+```
+We find it is (.322, .627). So we believe our range of reduced time to loss of eyesight is between 32.2% to 62.7%.
+
+
+#Paired observations are not independent(Extension)
+
+We have paired observations. For every subject there are two observations: one treated eye and one control eye. Because there is almost certainly correlation amongst each subject’s eyes(each person has a different propensity of having their sight fail in either eye) we must look to see if using a **cluster** or **frailty** model provides more information than without them.  
+Essentially what we're doing is looking at the subject’s two observations separately to reduce the effect of a subject’s eye correlation has on our analysis.
+
+First we look at our current model:
+```{r, echo = F}
+cox.trt
+```
+Things to note down: LRT = 23.37 on 1df, exp(coef) = 0.449, p = 2.6e-06.
+
+
+Now let us take a look at the same model with an added cluster term:
+```{r}
+#Just clustering on trt
+cluster.trt = coxph(ret.surv ~ trt + cluster(id), data = ret)
+cluster.trt
+```
+We see that it's very similar to our previous model. Almost no change except for the p-value and they are both so small the change is trivial.
+
+
+Lastly we look at the frailty model:
+```{r}
+#Frailty Model
+frailty.trt = coxph(ret.surv ~ trt + frailty(id, distribution = 'gamma') + strata(risk), data = ret)
+frailty.trt
+```
+Very different values. LRT = 201 on 85.6 df, etc.
+
+We run another LRT between the frailty model and our current stratafied model.
+```{r}
+LRT2 = 2*(logLik(frailty.trt) - logLik(cox.strata.risk))
+
+round(pchisq(as.numeric(LRT2), 3, lower.tail = FALSE),3)
+```
+We find the frailty term is significant!
+
+
+When we look at the results after using the cluster function on id against all covariates, we see that again only treatment and risk prove to be significant covariates in our analysis.
+When we cluster *id* against *laser*, we get a p value a little bigger than .3 showing that even with modifying the data so as to account for the fact we have multiple observation for the same subject the type of *laser* has no significant effect on patients alone.
+When we use cluster function against treatment, we again see that this covariate has significant effect on survival rate even with our adjustment to the data.
+
+Our final model we arrive at is:
+
+*coxph(ret.surv ~ trt + strata(risk) + frailty(id))*
+
+If we run summary() on this model we can look at the confidence intervals of the hazard ratios.  
+```{r, echo = F}
+frail.sum = summary(frailty.trt)
+frail.sum
+kable(frail.sum$conf.int) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width=FALSE)
+```
+
+
+#Conclusion
+
+The main takeaway from our analysis is that there is a distinct difference amongst the treated vs nontreated groups. Patients’ treated eyes survived 58.9% longer until failure compared to their non-treated counterparts. Using the table from above we can even construct a 95% confidence interval for our hazard ratios([0.2919, 0.5813]). So ultimately we believe the treatment to allow paitents keep their eye sight between 42% and 61% **longer** than those who forego the treatment.  
+
+Aside from that we don't find any other variable that contributed towards patients losing their eyesight or preventing sight failure(such as left or right eye, etc.).
+
+
+#References
+
+*W. J. Huster, R. Brookmeyer and S. G. Self (1989). Modelling paired survival data with covariates, Biometrics 45:145-156.*  
+*A. L. Blair, D. R. Hadden, J. A. Weaver, D. B. Archer, P. B. Johnston and C. J. Maguire (1976). The 5-year prognosis for vision in diabetes, American Journal of Ophthalmology, 81:383-396.*
